@@ -14,16 +14,19 @@ pub fn repl(mut db: Kline) -> std::io::Result<()> {
         let tokens: Vec<&str> = input.trim().splitn(3, ' ').collect();
         match tokens.as_slice() {
             ["put", key, value] => {
-                db.put(key.to_string(), value.to_string())?;
+                db.put(key.as_bytes().to_vec(), value.as_bytes().to_vec())?;
             }
             ["get", key] => {
-                match db.get(key) {
-                    Some(val) => println!("{}", val),
+                match db.get(key.as_bytes()) {
+                    Some(val) => println!("{}", String::from_utf8_lossy(val)),
                     None => println!("(null)"),
                 }
             }
             ["delete", key] => {
-                db.delete(key)?;
+                db.delete(key.as_bytes())?;
+            }
+            ["compact"] => {
+                db.compact()?;
             }
             ["exit"] => break,
             _ => println!("Unknown command. Use put/get/delete/exit."),
