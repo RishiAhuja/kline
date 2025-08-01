@@ -88,4 +88,13 @@ impl Kline {
         self.log = OpenOptions::new().append(true).open("kline.db")?;
         Ok(())
     }
+
+    pub fn keys(&self) -> Vec<&Vec<u8>> {
+        self.store.keys().collect()
+    }
+    
+    pub fn clear(&mut self) -> std::io::Result<()> {
+        self.store.clear();
+        self.compact() // write empty state to disk
+    }
 }
