@@ -1,4 +1,4 @@
-# Cline
+# Kline
 
 A simple key-value database written in Rust with persistent storage and crash recovery.
 
