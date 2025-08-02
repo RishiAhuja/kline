@@ -1,12 +1,17 @@
-// src/http.rs
+// src/http/http.rs
 
 use axum::{
-    routing::{get, put, delete},
-    Router, extract::{Path, State}, body::Bytes, response::IntoResponse,
+    body::Bytes, 
+    extract::{Path, State}, 
+    response::IntoResponse, 
+    routing::{delete, get, put}, 
+    Json, 
+    Router
 };
 use std::sync::Arc;
 use crate::Kline;
 use base64::{Engine as _};
+use super::responses::*;
 
 pub fn create_router(db: Arc<Kline>) -> Router {
     Router::new()
@@ -18,23 +23,27 @@ pub fn create_router(db: Arc<Kline>) -> Router {
 }
 
 async fn get_key(Path(key): Path<String>, State(db): State<Arc<Kline>>) -> impl IntoResponse {
-    match db.get(&key.into_bytes()) {
-        Some(value) => String::from_utf8_lossy(&value).to_string(),
-        None => "(null)".into(),
+    let key_bytes = key.as_bytes();
+    match db.get(key_bytes) {
+        Some(value) => {
+            let value_str = String::from_utf8_lossy(&value).to_string();
+            Json(ValueResponse::found(key, value_str))
+        }
+        None => Json(ValueResponse::not_found(key)),
     }
 }
 
 async fn put_key(Path(key): Path<String>, State(db): State<Arc<Kline>>, body: Bytes) -> impl IntoResponse {
     match db.put(key.into_bytes(), body.to_vec()) {
-        Ok(_) => "OK",
-        Err(_) => "Error storing key",
+        Ok(_) => Json(StatusResponse::ok()),
+        Err(_) => Json(StatusResponse::error("Error storing key")),
     }
 }
 
 async fn delete_key(Path(key): Path<String>, State(db): State<Arc<Kline>>) -> impl IntoResponse {
     match db.delete(&key.into_bytes()) {
-        Ok(_) => "Deleted",
-        Err(_) => "Error deleting key",
+        Ok(_) => Json(StatusResponse::deleted()),
+        Err(_) => Json(StatusResponse::error("Error deleting key")),
     }
 }
 
@@ -46,5 +55,5 @@ async fn get_all_keys(State(db): State<Arc<Kline>>) -> impl IntoResponse {
             Err(_) => keys.push(base64::engine::general_purpose::STANDARD.encode(&key)),
         }
     }
-    keys.join("\n")
+    Json(KeysResponse::new(keys))
 }
