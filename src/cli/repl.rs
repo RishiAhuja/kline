@@ -33,7 +33,7 @@ pub fn repl(mut db: Kline) -> std::io::Result<()> {
             }
             ["get", key] => {
                 match db.get(key.as_bytes()) {
-                    Some(val) => println!("{}", String::from_utf8_lossy(val)),
+                    Some(val) => println!("{}", String::from_utf8_lossy(&val)),
                     None => println!("(null)"),
                 }
             }
@@ -45,9 +45,9 @@ pub fn repl(mut db: Kline) -> std::io::Result<()> {
             }
             ["keys"] => {
                 for key in db.keys() {
-                    match std::str::from_utf8(key) {
+                    match std::str::from_utf8(&key) {
                         Ok(k) => println!("{}", k),
-                        Err(_) => println!("{}", general_purpose::STANDARD.encode(key)),
+                        Err(_) => println!("{}", general_purpose::STANDARD.encode(&key)),
                     }
                 }
             }

@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-
+use std::sync::{Arc, RwLock};
+use std::thread;
 use base64::{engine::general_purpose, Engine as _};
+use crate::constants::db::*;
 
 pub struct Kline {
-    store: HashMap<Vec<u8>, Vec<u8>>,
+    store: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
     log: File,
 }
 
@@ -42,59 +44,94 @@ impl Kline {
             }
         }
 
+        let store_arc = Arc::new(RwLock::new(store));
+        let _log = OpenOptions::new().append(true).create(true).open(path)?;
+
+        // compaction thread
+
+        let path_str = path.to_string();
+        let store_for_thread = Arc::clone(&store_arc);
+
+        thread::spawn(move || loop {
+            thread::sleep(COMPACTION_INTERVAL);
+            let temp_path = format!("{}{}", path_str, TEMP_FILE_SUFFIX);
+            if let Ok(store) = store_for_thread.read() {
+                if let Ok(mut temp_file) = File::create(&temp_path) {
+                    for (key, val) in store.iter() {
+                        let key_b64 = general_purpose::STANDARD.encode(key);
+                        let val_b64 = general_purpose::STANDARD.encode(val);
+                        let _ = writeln!(temp_file, "put {} {}", key_b64, val_b64);
+                    }
+                    // Atomically replace old log
+                    let _ = std::fs::rename(&temp_path, &path_str);
+                }
+            }
+        });
+
+
         // reopen file for append (because BufReader uses read-only)
         let log = OpenOptions::new()
             .append(true)
             .open(path)?;
 
-        Ok(Kline { store, log })
+        Ok(Kline { store: store_arc, log })
     }
 
 
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> std::io::Result<()> {
         let key_b64 = general_purpose::STANDARD.encode(&key);
         let value_b64 = general_purpose::STANDARD.encode(&value);
-
         writeln!(self.log, "put {} {}", key_b64, value_b64)?;
         self.log.flush()?;
-        self.store.insert(key, value);
+
+        let mut store = self.store.write().unwrap();
+        store.insert(key, value);
         Ok(())
     }
 
 
-    pub fn get(&self, key: &[u8]) -> Option<&Vec<u8>> {
-        self.store.get(key)
+
+    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let store = self.store.read().unwrap();
+        store.get(key).cloned()
     }
+
 
      pub fn delete(&mut self, key: &[u8]) -> std::io::Result<()> {
         let key_b64 = general_purpose::STANDARD.encode(key);
         writeln!(self.log, "delete {}", key_b64)?;
         self.log.flush()?;
-        self.store.remove(key);
+        let mut store = self.store.write().unwrap();
+        store.remove(key);
         Ok(())
     }
 
     pub fn compact(&mut self) -> std::io::Result<()> {
-        let temp_path = "kline.db.tmp";
-        let mut temp_file = File::create(temp_path)?;
+        let temp_path = format!("{}{}", DEFAULT_DB_FILE, TEMP_FILE_SUFFIX);
+        let mut temp_file = File::create(&temp_path)?;
 
-        for (key, value) in &self.store {
+        let store = self.store.read().unwrap();
+        for (key, value) in store.iter() {
             let key_b64 = general_purpose::STANDARD.encode(key);
             let value_b64 = general_purpose::STANDARD.encode(value);
             writeln!(temp_file, "put {} {}", key_b64, value_b64)?;
         }
 
-        std::fs::rename(temp_path, "kline.db")?;
-        self.log = OpenOptions::new().append(true).open("kline.db")?;
+        std::fs::rename(&temp_path, DEFAULT_DB_FILE)?;
+        self.log = OpenOptions::new().append(true).open(DEFAULT_DB_FILE)?;
         Ok(())
     }
 
-    pub fn keys(&self) -> Vec<&Vec<u8>> {
-        self.store.keys().collect()
+    pub fn keys(&self) -> Vec<Vec<u8>> {
+        let store = self.store.read().unwrap();
+        store.keys().cloned().collect()
     }
     
     pub fn clear(&mut self) -> std::io::Result<()> {
-        self.store.clear();
+        {
+            let mut store = self.store.write().unwrap();
+            store.clear();
+        } // store lock is dropped here
         self.compact() // write empty state to disk
     }
 }
