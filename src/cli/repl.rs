@@ -2,8 +2,9 @@ use crate::storage::Kline;
 use base64::Engine as _;
 use base64::engine::general_purpose;
 use rustyline::{DefaultEditor, error::ReadlineError};
+use std::sync::Arc;
 
-pub fn repl(mut db: Kline) -> std::io::Result<()> {
+pub fn repl(db: Arc<Kline>) -> std::io::Result<()> {
     let mut rl = DefaultEditor::new().expect("Failed to initialize rustyline");
 
     loop {
@@ -40,9 +41,6 @@ pub fn repl(mut db: Kline) -> std::io::Result<()> {
             ["delete", key] => {
                 db.delete(key.as_bytes())?;
             }
-            ["compact"] => {
-                db.compact()?;
-            }
             ["keys"] => {
                 for key in db.keys() {
                     match std::str::from_utf8(&key) {
@@ -51,21 +49,12 @@ pub fn repl(mut db: Kline) -> std::io::Result<()> {
                     }
                 }
             }
-            ["clear"] => {
-                if let Err(err) = db.clear() {
-                    eprintln!("Failed to clear store: {}", err);
-                } else {
-                    println!("Store cleared.");
-                }
-            }
             ["help"] => {
                 println!("Available commands:");
                 println!("  put <key> <value> - Store a key-value pair");
                 println!("  get <key> - Retrieve a value by key");
                 println!("  delete <key> - Remove a key-value pair");
-                println!("  compact - Compact the database");
                 println!("  keys - List all keys in the database");
-                println!("  clear - Clear the entire store");
                 println!("  exit - Exit the REPL");
             }
             ["exit"] => break,

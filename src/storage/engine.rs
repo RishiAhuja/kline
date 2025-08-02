@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Mutex};
 use std::thread;
 use base64::{engine::general_purpose, Engine as _};
 use crate::constants::db::*;
 
 pub struct Kline {
     store: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
-    log: File,
+    log: Arc<Mutex<File>>,
 }
 
 impl Kline {
@@ -74,15 +74,19 @@ impl Kline {
             .append(true)
             .open(path)?;
 
-        Ok(Kline { store: store_arc, log })
+        Ok(Kline { store: store_arc, log: Arc::new(Mutex::new(log)) })
     }
 
 
-    pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> std::io::Result<()> {
+    pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> std::io::Result<()> {
         let key_b64 = general_purpose::STANDARD.encode(&key);
         let value_b64 = general_purpose::STANDARD.encode(&value);
-        writeln!(self.log, "put {} {}", key_b64, value_b64)?;
-        self.log.flush()?;
+        
+        {
+            let mut log = self.log.lock().unwrap();
+            writeln!(log, "put {} {}", key_b64, value_b64)?;
+            log.flush()?;
+        }
 
         let mut store = self.store.write().unwrap();
         store.insert(key, value);
@@ -97,10 +101,15 @@ impl Kline {
     }
 
 
-     pub fn delete(&mut self, key: &[u8]) -> std::io::Result<()> {
+     pub fn delete(&self, key: &[u8]) -> std::io::Result<()> {
         let key_b64 = general_purpose::STANDARD.encode(key);
-        writeln!(self.log, "delete {}", key_b64)?;
-        self.log.flush()?;
+        
+        {
+            let mut log = self.log.lock().unwrap();
+            writeln!(log, "delete {}", key_b64)?;
+            log.flush()?;
+        }
+        
         let mut store = self.store.write().unwrap();
         store.remove(key);
         Ok(())
@@ -118,7 +127,8 @@ impl Kline {
         }
 
         std::fs::rename(&temp_path, DEFAULT_DB_FILE)?;
-        self.log = OpenOptions::new().append(true).open(DEFAULT_DB_FILE)?;
+        let new_log = OpenOptions::new().append(true).open(DEFAULT_DB_FILE)?;
+        self.log = Arc::new(Mutex::new(new_log));
         Ok(())
     }
 
