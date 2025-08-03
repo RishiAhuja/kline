@@ -3,7 +3,7 @@ use serde::Serialize;
 /// Response for operations that return a simple status
 #[derive(Serialize)]
 pub struct StatusResponse {
-    pub status: &'static str,
+    pub status: String,
 }
 
 /// Response for get operations that return a value
@@ -30,14 +30,14 @@ pub struct ErrorResponse {
 
 impl StatusResponse {
     pub fn ok() -> Self {
-        Self { status: "OK" }
+        Self { status: String::from("OK") }
     }
     
     pub fn deleted() -> Self {
-        Self { status: "Deleted" }
+        Self { status: String::from("Deleted") }
     }
     
-    pub fn error(msg: &'static str) -> Self {
+    pub fn error(msg: String) -> Self {
         Self { status: msg }
     }
 }
@@ -64,5 +64,12 @@ impl KeysResponse {
     pub fn new(keys: Vec<String>) -> Self {
         let count = keys.len();
         Self { keys, count }
+    }
+    
+    pub fn error(msg: &str) -> Self {
+        Self { 
+            keys: vec![format!("Error: {}", msg)], 
+            count: 0 
+        }
     }
 }

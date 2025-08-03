@@ -5,14 +5,22 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::thread;
 use base64::{engine::general_purpose, Engine as _};
 use crate::constants::db::*;
+use crate::config::KlineConfig;
+use crate::error::{KlineError, Result};
 
 pub struct Kline {
     store: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
     log: Arc<Mutex<File>>,
+    config: KlineConfig,
 }
 
 impl Kline {
-    pub fn open(path: &str) -> std::io::Result<Self> {
+    pub fn open(path: &str) -> Result<Self> {
+        let config = KlineConfig::load()?;
+        Self::open_with_config(path, config)
+    }
+    
+    pub fn open_with_config(path: &str, config: KlineConfig) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .append(true)
@@ -74,52 +82,82 @@ impl Kline {
             .append(true)
             .open(path)?;
 
-        Ok(Kline { store: store_arc, log: Arc::new(Mutex::new(log)) })
+        Ok(Kline { 
+            store: store_arc, 
+            log: Arc::new(Mutex::new(log)),
+            config,
+        })
     }
 
 
-    pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> std::io::Result<()> {
+    pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        // Validate key and value sizes
+        if key.len() > self.config.limits.max_key_size {
+            return Err(KlineError::KeyTooLarge { 
+                size: key.len(), 
+                max: self.config.limits.max_key_size 
+            });
+        }
+        
+        if value.len() > self.config.limits.max_value_size {
+            return Err(KlineError::ValueTooLarge { 
+                size: value.len(), 
+                max: self.config.limits.max_value_size 
+            });
+        }
+        
+        // Check if database is full
+        {
+            let store = self.store.read().map_err(|_| KlineError::LockPoisoned)?;
+            if store.len() >= self.config.limits.max_keys {
+                return Err(KlineError::DatabaseFull { 
+                    current: store.len(), 
+                    max: self.config.limits.max_keys 
+                });
+            }
+        }
+        
         let key_b64 = general_purpose::STANDARD.encode(&key);
         let value_b64 = general_purpose::STANDARD.encode(&value);
         
         {
-            let mut log = self.log.lock().unwrap();
+            let mut log = self.log.lock().map_err(|_| KlineError::LockPoisoned)?;
             writeln!(log, "put {} {}", key_b64, value_b64)?;
             log.flush()?;
         }
 
-        let mut store = self.store.write().unwrap();
+        let mut store = self.store.write().map_err(|_| KlineError::LockPoisoned)?;
         store.insert(key, value);
         Ok(())
     }
 
 
 
-    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let store = self.store.read().unwrap();
-        store.get(key).cloned()
+    pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let store = self.store.read().map_err(|_| KlineError::LockPoisoned)?;
+        Ok(store.get(key).cloned())
     }
 
 
-     pub fn delete(&self, key: &[u8]) -> std::io::Result<()> {
+     pub fn delete(&self, key: &[u8]) -> Result<()> {
         let key_b64 = general_purpose::STANDARD.encode(key);
         
         {
-            let mut log = self.log.lock().unwrap();
+            let mut log = self.log.lock().map_err(|_| KlineError::LockPoisoned)?;
             writeln!(log, "delete {}", key_b64)?;
             log.flush()?;
         }
         
-        let mut store = self.store.write().unwrap();
+        let mut store = self.store.write().map_err(|_| KlineError::LockPoisoned)?;
         store.remove(key);
         Ok(())
     }
 
-    pub fn compact(&mut self) -> std::io::Result<()> {
+    pub fn compact(&mut self) -> Result<()> {
         let temp_path = format!("{}{}", DEFAULT_DB_FILE, TEMP_FILE_SUFFIX);
         let mut temp_file = File::create(&temp_path)?;
 
-        let store = self.store.read().unwrap();
+        let store = self.store.read().map_err(|_| KlineError::LockPoisoned)?;
         for (key, value) in store.iter() {
             let key_b64 = general_purpose::STANDARD.encode(key);
             let value_b64 = general_purpose::STANDARD.encode(value);
@@ -132,14 +170,14 @@ impl Kline {
         Ok(())
     }
 
-    pub fn keys(&self) -> Vec<Vec<u8>> {
-        let store = self.store.read().unwrap();
-        store.keys().cloned().collect()
+    pub fn keys(&self) -> Result<Vec<Vec<u8>>> {
+        let store = self.store.read().map_err(|_| KlineError::LockPoisoned)?;
+        Ok(store.keys().cloned().collect())
     }
     
-    pub fn clear(&mut self) -> std::io::Result<()> {
+    pub fn clear(&mut self) -> Result<()> {
         {
-            let mut store = self.store.write().unwrap();
+            let mut store = self.store.write().map_err(|_| KlineError::LockPoisoned)?;
             store.clear();
         } // store lock is dropped here
         self.compact() // write empty state to disk
